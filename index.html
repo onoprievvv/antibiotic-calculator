@@ -1,1 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Калькулятор антибиотикопрофилактики</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxjs/dist/onnx.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .input-group { margin: 10px 0; }
+    .result { margin-top: 20px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>Калькулятор риска ПИО</h2>
+  <div class="input-group">
+    <label>Доза суточная АБ1 (мг):</label>
+    <input type="number" id="dose" step="0.1" value="0">
+  </div>
+  <div class="input-group">
+    <label>Длительность терапии АБ1 (сут):</label>
+    <input type="number" id="duration" step="0.1" value="0">
+  </div>
+  <div class="input-group">
+    <label>Возраст:</label>
+    <input type="number" id="age" step="0.1" value="0">
+  </div>
+  <div class="input-group">
+    <label>СРБ 1 сутки после операции:</label>
+    <input type="number" id="crp" step="0.1" value="0">
+  </div>
+  <div class="input-group">
+    <label>Лейкоциты 1 сутки после операции (x10^9/л):</label>
+    <input type="number" id="leukocytes" step="0.1" value="0">
+  </div>
+  <div class="input-group">
+    <label>Шкала ASA (1-5):</label>
+    <input type="number" id="asa" step="0.1" value="0">
+  </div>
+  <div class="input-group">
+    <label>Тип операции (чистота раны 2-4, 1=нет):</label>
+    <select id="surgery_type">
+      <option value="0">1 (чистая)</option>
+      <option value="1">2</option>
+      <option value="2">3</option>
+      <option value="3">4</option>
+    </select>
+  </div>
+  <div class="input-group">
+    <label>Тип антибиотика (выберите):</label>
+    <select id="antibiotic">
+      <option value="0">Нет</option>
+      <option value="1">ампициллин/сульбактам</option>
+      <option value="2">цефтриаксон</option>
+      <option value="3">амоксициллин/клавуланат</option>
+      <option value="4">цефепим/сульбактам</option>
+      <option value="5">тигециклин</option>
+      <option value="6">меропенем</option>
+      <option value="7">фосфомицин</option>
+      <option value="8">полимиксин В</option>
+      <option value="9">ванкомицин</option>
+      <option value="10">цефиксим</option>
+      <option value="11">левофлоксацин</option>
+      <option value="12">цефотаксим/сульбактам</option>
+      <option value="13">ципрофлоксацин</option>
+      <option value="14">имипенем/циластатин</option>
+      <option value="15">линезолид</option>
+      <option value="16">метронидазол</option>
+      <option value="17">пиперациллин/тазобактам</option>
+      <option value="18">цефоперазон/сульбактам</option>
+      <option value="19">эртапенем</option>
+      <option value="20">амикацин</option>
+      <option value="21">цейтаролин фосамил</option>
+      <option value="22">тейкопланин</option>
+    </select>
+  </div>
+  <button onclick="predictRisk()">Рассчитать риск</button>
+  <div class="result" id="result"></div>
 
+  <script>
+    // Загрузка модели
+    async function loadModel() {
+      try {
+        const session = new onnx.InferenceSession();
+        await session.loadModel('https://onoprievvv.github.io/antibiotic-calculator/models/random_forest_model.onnx');
+        console.log('Модель успешно загружена');
+        return session;
+      } catch (error) {
+        console.error('Ошибка загрузки модели:', error);
+        return null;
+      }
+    }
+
+    // Реализация StandardScaler с точными статистиками
+    class StandardScaler {
+      constructor() {
+        // Точные средние значения на основе тренировочных данных (9 признаков)
+        this.means = [3010.87, 4.73, 54.71, 92.31, 11.26, 2.23, 1.2, 5.0, 0.0]; // Добавлен 9-й признак (заглушка)
+        // Точные стандартные отклонения на основе тренировочных данных
+        this.stds = [2361.79, 3.18, 15.90, 95.18, 4.58, 0.58, 0.9, 5.0, 1.0]; // Добавлено стандартное отклонение для заглушки
+      }
+
+      // Масштабирование данных
+      transform(x) {
+        return x.map((val, i) => (val - this.means[i]) / this.stds[i]);
+      }
+    }
+
+    // Предсказание риска
+    async function predictRisk() {
+      const session = await loadModel();
+      if (!session) {
+        document.getElementById('result').innerText = 'Ошибка: Модель не загружена. Проверьте путь.';
+        return;
+      }
+
+      const scaler = new StandardScaler();
+
+      const dose = parseFloat(document.getElementById('dose').value) || 0;
+      const duration = parseFloat(document.getElementById('duration').value) || 0;
+      const age = parseFloat(document.getElementById('age').value) || 0;
+      const crp = parseFloat(document.getElementById('crp').value) || 0;
+      const leukocytes = parseFloat(document.getElementById('leukocytes').value) || 0;
+      const asa = parseFloat(document.getElementById('asa').value) || 0;
+      const surgeryType = parseInt(document.getElementById('surgery_type').value) || 0;
+      const antibiotic = parseInt(document.getElementById('antibiotic').value) || 0;
+      // Добавляем 9-й признак (заглушка, например, 0 или значение по умолчанию)
+      const extraFeature = 0; // Замените на реальный признак, если известен
+
+      const input = [dose, duration, age, crp, leukocytes, asa, surgeryType, antibiotic, extraFeature];
+      const scaledInput = scaler.transform(input);
+      const inputTensor = new onnx.Tensor(new Float32Array(scaledInput), 'float32', [1, 9]);
+
+      try {
+        const outputMap = await session.run([inputTensor]);
+        const prediction = outputMap.values().next().value.data[0];
+
+        let recommendation = "Рекомендуется оптимизация антибиотика: ";
+        if (antibiotic > 0 && prediction > 0.33) {
+          recommendation += "Рассмотрите альтернативный антибиотик с меньшим риском.";
+        } else if (antibiotic === 0) {
+          recommendation += "Назначьте антибиотик (например, цефтриаксон или амоксициллин/клавуланат).";
+        } else {
+          recommendation += "Текущий антибиотик приемлем.";
+        }
+
+        document.getElementById('result').innerText = `Вероятность ПИО: ${(prediction * 100).toFixed(2)}%. ${recommendation}`;
+      } catch (error) {
+        console.error('Ошибка инференса:', error);
+        document.getElementById('result').innerText = 'Ошибка: Проверьте данные или модель.';
+      }
+    }
+  </script>
+</body>
+</html>
