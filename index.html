@@ -76,38 +76,52 @@
   <div class="result" id="result"></div>
 
   <script>
+    let session = null; // Переменная для хранения сессии модели
+
     // Загрузка модели
     async function loadModel() {
+      if (session) return session; // Если модель уже загружена, возвращаем существующую сессию
       try {
-        const session = new onnx.InferenceSession();
-        await session.loadModel('https://onoprievvv.github.io/antibiotic-calculator/random_forest_model.onnx');
+        session = new onnx.InferenceSession();
+        // Используем относительный путь, предполагая, что random_forest_model.onnx находится в том же каталоге, что и index.html
+        await session.loadModel('random_forest_model.onnx');
+        console.log('Модель успешно загружена');
         return session;
-      } catch (error) {
-        console.error('Ошибка загрузки модели:', error);
+      } catch (e) {
+        console.error('Ошибка загрузки модели:', e);
+        document.getElementById('result').innerText = 'Ошибка: Модель не загружена. Проверьте путь или целостность файла.';
         return null;
       }
     }
 
-    // Реализация StandardScaler с точными статистиками
+    // Реализация StandardScaler с точными статистиками для 8 признаков
+    // ВАЖНО: Эти значения должны точно соответствовать тем, на которых обучалась ваша модель Python.
+    // Если ваша модель действительно имеет 8 признаков, убедитесь, что эти средние и стандартные отклонения верны.
     class StandardScaler {
       constructor() {
-        // Точные средние значения на основе тренировочных данных (9 признаков)
-        this.means = [3010.87, 4.73, 54.71, 92.31, 11.26, 2.23, 1.2, 5.0, 0.0]; // Добавлен 9-й признак (заглушка)
-        // Точные стандартные отклонения на основе тренировочных данных
-        this.stds = [2361.79, 3.18, 15.90, 95.18, 4.58, 0.58, 0.9, 5.0, 1.0]; // Добавлено стандартное отклонение для заглушки
+        // Примерные значения для 8 признаков. ЗАМЕНИТЕ НА ВАШИ РЕАЛЬНЫЕ!
+        // Порядок: Доза, Длительность, Возраст, СРБ, Лейкоциты, ASA, ТипОперации, ТипАнтибиотика
+        this.means = [3010.87, 4.73, 54.71, 92.31, 11.26, 2.23, 1.2, 5.0];
+        this.stds = [2361.79, 3.18, 15.90, 95.18, 4.58, 0.58, 0.9, 5.0];
       }
 
       // Масштабирование данных
       transform(x) {
+        if (x.length !== this.means.length || x.length !== this.stds.length) {
+            console.error("Ошибка StandardScaler: Количество входных признаков не соответствует количеству средних/стандартных отклонений.");
+            return x; // Возвращаем исходные данные, чтобы избежать дальнейших ошибок
+        }
         return x.map((val, i) => (val - this.means[i]) / this.stds[i]);
       }
     }
 
     // Предсказание риска
     async function predictRisk() {
-      const session = await loadModel();
-      if (!session) {
-        document.getElementById('result').innerText = 'Ошибка: Модель не загружена. Проверьте путь.';
+      const currentSession = await loadModel();
+      if (!currentSession) {
+        // Если сессия не инициализирована (из-за ошибки загрузки модели),
+        // выводим сообщение об ошибке и прекращаем выполнение.
+        document.getElementById('result').innerText = 'Ошибка: Сессия модели не инициализирована. Пожалуйста, попробуйте еще раз или проверьте консоль.';
         return;
       }
 
@@ -119,34 +133,56 @@
       const crp = parseFloat(document.getElementById('crp').value) || 0;
       const leukocytes = parseFloat(document.getElementById('leukocytes').value) || 0;
       const asa = parseFloat(document.getElementById('asa').value) || 0;
-      const surgeryType = parseInt(document.getElementById('surgery_type').value) || 0;
-      const antibiotic = parseInt(document.getElementById('antibiotic').value) || 0;
-      // Добавляем 9-й признак (заглушка, например, 0 или значение по умолчанию)
-      const extraFeature = 0; // Замените на реальный признак, если известен
+      const surgeryType = parseInt(document.getElementById('surgery_type').value) || 0; // Категориальный признак
+      const antibiotic = parseInt(document.getElementById('antibiotic').value) || 0; // Категориальный признак
 
-      const input = [dose, duration, age, crp, leukocytes, asa, surgeryType, antibiotic, extraFeature];
+      // Формируем входной массив из 8 признаков.
+      // ВАЖНО: Порядок этих признаков должен ТОЧНО соответствовать порядку признаков, на которых обучалась ваша модель.
+      // Если ТипОперации и ТипАнтибиотика были one-hot encoded в Python, то здесь вы должны их one-hot encode.
+      // Если они передавались как числа, то так и оставляем.
+      // Исходя из предыдущих обсуждений, ваша модель имела 9 признаков, где 3 из них были OHE от ТипаОперации.
+      // Если вы переобучили модель на 8 признаков, то убедитесь, что именно эти 8 признаков подаются.
+      const input = [dose, duration, age, crp, leukocytes, asa, surgeryType, antibiotic];
+
       const scaledInput = scaler.transform(input);
-      const inputTensor = new onnx.Tensor(new Float32Array(scaledInput), 'float32', [1, 9]);
+
+      // Проверка, что количество признаков после масштабирования равно 8
+      if (scaledInput.length !== 8) {
+          console.error(`Ошибка: Неверное количество масштабированных признаков. Ожидается 8, получено ${scaledInput.length}.`);
+          document.getElementById('result').innerText = 'Ошибка: Неверное количество входных данных для модели.';
+          return;
+      }
+
+      const inputTensor = new onnx.Tensor(new Float32Array(scaledInput), 'float32', [1, 8]); // Форма тензора [1, 8]
 
       try {
-        const outputMap = await session.run([inputTensor]);
-        const prediction = outputMap.values().next().value.data[0];
+        const outputMap = await currentSession.run([inputTensor]);
+        // Ваша модель имеет два выхода: 'output_label' и 'output_probability'
+        // 'output_probability' дает вероятности, возьмем второе значение для класса 1
+        const predictionProbability = outputMap.get('output_probability').data[1]; // Вероятность класса 1
+        // const predictionLabel = outputMap.get('output_label').data[0]; // Предсказанная метка (0 или 1) - не используется в рекомендации
 
         let recommendation = "Рекомендуется оптимизация антибиотика: ";
-        if (antibiotic > 0 && prediction > 0.33) {
-          recommendation += "Рассмотрите альтернативный антибиотик с меньшим риском.";
+        const riskThreshold = 0.33; // Ваш порог из Python-скрипта
+
+        if (antibiotic > 0 && predictionProbability >= riskThreshold) {
+          recommendation += `Высокий риск (${(predictionProbability * 100).toFixed(2)}%). Рассмотрите альтернативный антибиотик с меньшим риском.`;
         } else if (antibiotic === 0) {
-          recommendation += "Назначьте антибиотик (например, цефтриаксон или амоксициллин/клавуланат).";
+          recommendation += `Риск ${(predictionProbability * 100).toFixed(2)}%. Назначьте антибиотик (например, цефтриаксон или амоксициллин/клавуланат).`;
         } else {
-          recommendation += "Текущий антибиотик приемлем.";
+          recommendation += `Риск ${(predictionProbability * 100).toFixed(2)}%. Текущий антибиотик приемлем.`;
         }
 
-        document.getElementById('result').innerText = `Вероятность ПИО: ${(prediction * 100).toFixed(2)}%. ${recommendation}`;
+        document.getElementById('result').innerText = `Вероятность ПИО: ${(predictionProbability * 100).toFixed(2)}%. ${recommendation}`;
+
       } catch (error) {
         console.error('Ошибка инференса:', error);
-        document.getElementById('result').innerText = 'Ошибка: Проверьте данные или модель.';
+        document.getElementById('result').innerText = 'Ошибка: Проверьте данные или модель. Подробности в консоли.';
       }
     }
+
+    // Загрузка модели при загрузке страницы
+    window.onload = loadModel;
   </script>
 </body>
 </html>
