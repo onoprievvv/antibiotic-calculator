@@ -80,7 +80,7 @@
     async function loadModel() {
       try {
         const session = new onnx.InferenceSession();
-        await session.loadModel('https://onoprievvv.github.io/antibiotic-calculator/models/random_forest_model.onnx');
+        await session.loadModel('https://onoprievvv.github.io/antibiotic-calculator/random_forest_model.onnx');
         console.log('Модель успешно загружена');
         return session;
       } catch (error) {
